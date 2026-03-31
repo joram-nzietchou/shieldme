@@ -1,0 +1,162 @@
+version: '3.8'
+
+# ========== NETWORKS ==========
+networks:
+  shieldme_network:
+    driver: bridge
+    name: shieldme_network
+
+# ========== VOLUMES ==========
+volumes:
+  postgres_data:
+    name: shieldme_postgres_data
+  backend_node_modules:
+    name: shieldme_backend_node_modules
+
+# ========== SERVICES ==========
+services:
+  # ========== BASE DE DONNÉES POSTGRESQL ==========
+  postgres:
+    image: postgres:latest
+    container_name: shieldme_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-joram18}
+      POSTGRES_DB: ${DB_NAME:-ShieldMe}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --locale=fr_FR.UTF-8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    networks:
+      - shieldme_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-ShieldMe}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ========== BACKEND NODE.JS API ==========
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: ${NODE_ENV:-development}
+    container_name: shieldme_backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 3000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-joram18}
+      DB_NAME: ${DB_NAME:-ShieldMe}
+      JWT_SECRET: ${JWT_SECRET:-super_secret_key_change_in_production_2024}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-30d}
+      OTP_EXPIRES_MINUTES: ${OTP_EXPIRES_MINUTES:-5}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./backend:/app
+      - backend_node_modules:/app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - shieldme_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ========== NGINX REVERSE PROXY ==========
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: shieldme_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"      # HTTP
+      - "443:443"    # HTTPS (production)
+      - "8080:8080"  # Interface admin (optionnel)
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/html:/usr/share/nginx/html:ro
+      - ./nginx/logs:/var/log/nginx
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - shieldme_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ========== ADMINER - GESTION BASE DE DONNÉES ==========
+  adminer:
+    image: adminer:latest
+    container_name: shieldme_adminer
+    restart: unless-stopped
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+      ADMINER_DESIGN: dracula
+      ADMINER_PLUGINS: "tables-filter tinymce"
+    ports:
+      - "8081:8080"
+    depends_on:
+      - postgres
+    networks:
+      - shieldme_network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ========== REDIS (CACHE) - OPTIONNEL ==========
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: shieldme_redis
+  #   restart: unless-stopped
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis_data:/data
+  #   networks:
+  #     - shieldme_network
+  #   command: redis-server --appendonly yes
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+# ========== VOLUMES PERSISTANTS ==========
+# volumes:
+#   redis_data:
+#     name: shieldme_redis_data
