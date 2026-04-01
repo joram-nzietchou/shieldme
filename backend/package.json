@@ -3,43 +3,33 @@
   "version": "1.0.0",
   "description": "ShieldMe API - Protection contre les arnaques MoMo",
   "main": "server.js",
-  "private": true,
-  "engines": {
-    "node": ">=18.0.0",
-    "npm": ">=9.0.0"
-  },
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "audit": "npm audit",
-    "security-check": "npm audit --production"
+    "dev:debug": "nodemon --inspect server.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "logs": "tail -f logs/combined.log",
+    "health": "curl http://localhost:3000/health"
   },
   "dependencies": {
-    "express": "4.19.2",
-    "pg": "8.12.0",
-    "bcryptjs": "2.4.3",
-    "jsonwebtoken": "9.0.2",
-    "dotenv": "16.4.5",
-    "cors": "2.8.5",
-    "express-validator": "7.1.0",
-    "nodemailer": "6.9.13",
-    "helmet": "7.1.0",
-    "compression": "1.7.4",
-    "express-rate-limit": "7.2.0"
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "helmet": "^7.1.0",
+    "compression": "^1.7.4",
+    "express-rate-limit": "^7.1.5",
+    "morgan": "^1.10.0",
+    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3"
   },
   "devDependencies": {
-    "nodemon": "3.1.0",
-    "jest": "29.7.0"
-  },
-  "overrides": {
-    "follow-redirects": "1.15.6",
-    "semver": "7.6.3",
-    "braces": "3.0.3",
-    "cross-spawn": "7.0.6",
-    "ws": "8.18.0",
-    "cookie": "0.6.0",
-    "path-to-regexp": "0.1.10",
-    "send": "0.19.0",
-    "serve-static": "1.16.0"
+    "nodemon": "^3.0.1",
+    "jest": "^29.7.0",
+    "supertest": "^6.3.3",
+    "eslint": "^8.57.0",
+    "prettier": "^3.2.5"
   }
 }

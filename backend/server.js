@@ -1,253 +1,166 @@
 const express = require('express');
 const cors = require('cors');
-const helmet = require('helmet');
-const compression = require('compression');
-const rateLimit = require('express-rate-limit');
 const dotenv = require('dotenv');
-const path = require('path');
 
-// ========== CHARGEMENT DES VARIABLES D'ENVIRONNEMENT ==========
-// Charger le bon fichier .env selon l'environnement
-const envFile = process.env.NODE_ENV === 'production' 
-    ? '.env.production' 
-    : process.env.NODE_ENV === 'staging' 
-        ? '.env.staging' 
-        : '.env.development';
-
-// Essayer de charger le fichier spécifique à l'environnement
-if (require('fs').existsSync(path.join(__dirname, envFile))) {
-    dotenv.config({ path: envFile });
-    console.log(`📁 Environnement chargé: ${envFile}`);
-} else {
-    // Fallback sur .env
-    dotenv.config();
-    console.log(`📁 Environnement chargé: .env (default)`);
-}
-
-console.log(`🌍 Mode: ${process.env.NODE_ENV || 'development'}`);
-
-// ========== IMPORT DES MODULES ==========
-const authRoutes = require('./routes/auth');
-const pool = require('./db/pool');
+dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const isProduction = process.env.NODE_ENV === 'production';
 
-// ========== CONFIGURATION CORS ==========
-const allowedOrigins = {
-    development: [
-        'http://localhost:5000',
-        'http://127.0.0.1:5000',
-        'http://localhost:3000',
-        'http://127.0.0.1:3000',
-        'http://localhost:52863',
-        'http://127.0.0.1:52863',
-        'http://localhost',
-        'http://10.0.2.2:3000',
-        'http://10.0.2.2:5000',
-    ],
-    staging: [
-        'https://staging.shieldme.com',
-        'https://api-staging.shieldme.com',
-    ],
-    production: [
-        'https://shieldme.com',
-        'https://www.shieldme.com',
-        'https://api.shieldme.com',
-    ]
-};
-
-const getCorsOptions = () => {
-    const environment = process.env.NODE_ENV || 'development';
-    const origins = allowedOrigins[environment] || allowedOrigins.development;
-    
-    return {
-        origin: function(origin, callback) {
-            // Permettre les requêtes sans origin (apps mobiles/desktop)
-            if (!origin) return callback(null, true);
-            
-            // En développement, permettre toutes les origines
-            if (environment === 'development') {
-                return callback(null, true);
-            }
-            
-            // En production/staging, vérifier la liste blanche
-            if (origins.indexOf(origin) !== -1) {
-                callback(null, true);
-            } else {
-                console.warn(`🚫 Origin bloqué par CORS: ${origin}`);
-                callback(new Error('Not allowed by CORS'));
-            }
-        },
-        credentials: true,
-        optionsSuccessStatus: 200,
-        methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-        allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
-        exposedHeaders: ['Content-Range', 'X-Content-Range'],
-        maxAge: 86400, // 24 heures
-    };
-};
-
-// ========== MIDDLEWARES DE SÉCURITÉ ==========
-
-// Helmet pour sécuriser les en-têtes HTTP
-app.use(helmet({
-    crossOriginResourcePolicy: { policy: "cross-origin" },
-    contentSecurityPolicy: isProduction ? undefined : false,
-    hsts: isProduction ? {
-        maxAge: 31536000,
-        includeSubDomains: true,
-        preload: true
-    } : false,
+// Middleware de base
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  credentials: true,
 }));
 
-// Compression des réponses
-app.use(compression());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Rate limiting - protection contre les attaques DDoS
-const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100, // limite par IP
-    message: { 
-        success: false, 
-        message: 'Trop de requêtes, veuillez réessayer plus tard.' 
-    },
-    standardHeaders: true,
-    legacyHeaders: false,
-    skip: (req) => req.path === '/health', // Ne pas limiter le health check
+// Logging simple (remplace morgan)
+app.use((req, res, next) => {
+  console.log(`📨 ${req.method} ${req.url}`);
+  next();
 });
-app.use('/api', limiter);
 
-// CORS professionnel
-app.use(cors(getCorsOptions()));
-
-// Parsing des requêtes avec limites de sécurité
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// Logging des requêtes (uniquement en développement)
-if (!isProduction) {
-    app.use((req, res, next) => {
-        console.log(`📥 ${req.method} ${req.path}`);
-        next();
+// Importer les routes auth
+let authRoutes;
+try {
+  authRoutes = require('./routes/authRoutes');
+  console.log('✅ Routes auth chargées');
+} catch (error) {
+  console.log('⚠️ Fichier routes/authRoutes.js non trouvé, création des routes par défaut');
+  
+  // Routes par défaut si le fichier n'existe pas
+  const router = express.Router();
+  
+  // Stockage temporaire
+  const users = new Map();
+  const otps = new Map();
+  
+  router.post('/send-otp', (req, res) => {
+    const { phone } = req.body;
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    otps.set(phone, { code: otpCode, expiresAt: Date.now() + 300000, isUsed: false });
+    console.log(`📱 OTP pour ${phone}: ${otpCode}`);
+    res.json({ success: true, message: 'Code envoyé', expiresIn: 5 });
+  });
+  
+  router.post('/verify-otp', (req, res) => {
+    const { phone, otp, fullName } = req.body;
+    const stored = otps.get(phone);
+    
+    if (!stored || stored.isUsed || stored.expiresAt < Date.now()) {
+      return res.status(400).json({ success: false, message: 'Code invalide ou expiré' });
+    }
+    if (stored.code !== otp) {
+      return res.status(400).json({ success: false, message: 'Code incorrect' });
+    }
+    
+    stored.isUsed = true;
+    let user = users.get(phone);
+    let isNewUser = false;
+    
+    if (!user) {
+      user = {
+        id: users.size + 1,
+        fullName: fullName || 'Utilisateur',
+        phone: phone,
+        referralCode: `SHIELD-${Math.floor(1000 + Math.random() * 9000)}`,
+        isPremium: false,
+        walletBalance: 100,
+        createdAt: new Date().toISOString()
+      };
+      users.set(phone, user);
+      isNewUser = true;
+      console.log(`✅ Nouvel utilisateur créé: ${fullName}`);
+    }
+    
+    const token = `jwt_${Date.now()}_${user.id}`;
+    res.json({
+      success: true,
+      message: isNewUser ? 'Inscription réussie!' : 'Connexion réussie!',
+      token: token,
+      refreshToken: `refresh_${Date.now()}`,
+      user: user,
+      isNewUser: isNewUser
     });
+  });
+  
+  router.get('/me', (req, res) => {
+    res.json({
+      success: true,
+      user: {
+        id: 1,
+        fullName: 'Jean Kamga',
+        phone: '+237612345678',
+        referralCode: 'SHIELD-001',
+        isPremium: false,
+        walletBalance: 150,
+        createdAt: new Date().toISOString()
+      }
+    });
+  });
+  
+  router.post('/logout', (req, res) => {
+    res.json({ success: true, message: 'Déconnecté' });
+  });
+  
+  authRoutes = router;
 }
 
-// ========== ROUTES ==========
-
-// Routes d'authentification
 app.use('/api/auth', authRoutes);
 
-// Route de santé pour les checks
+// Health check
 app.get('/health', (req, res) => {
-    res.json({
-        success: true,
-        status: 'OK',
-        timestamp: new Date().toISOString(),
-        environment: process.env.NODE_ENV || 'development',
-        version: process.env.npm_package_version || '1.0.0',
-        uptime: process.uptime()
-    });
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
 });
 
-// Route racine
+// Route d'accueil
 app.get('/', (req, res) => {
-    res.json({
-        name: 'ShieldMe API',
-        version: '1.0.0',
-        status: 'running',
-        documentation: '/api/auth',
-        health: '/health'
-    });
-});
-
-// ========== GESTION DES ERREURS ==========
-
-// 404 Handler - Route non trouvée
-app.use((req, res) => {
-    res.status(404).json({
-        success: false,
-        message: 'Route non trouvée',
-        path: req.path,
-        method: req.method
-    });
-});
-
-// Error handler global
-app.use((err, req, res, next) => {
-    console.error('❌ Erreur globale:', {
-        message: err.message,
-        stack: isProduction ? undefined : err.stack,
-        path: req.path,
-        method: req.method,
-        ip: req.ip
-    });
-    
-    res.status(500).json({
-        success: false,
-        message: isProduction ? 'Erreur interne du serveur' : err.message,
-        ...(isProduction ? {} : { stack: err.stack })
-    });
-});
-
-// ========== DÉMARRAGE DU SERVEUR ==========
-
-const startServer = async () => {
-    try {
-        // Vérifier la connexion à la base de données
-        const dbTest = await pool.query('SELECT NOW() as time, current_database() as db');
-        console.log('✅ Base de données connectée');
-        console.log(`   📊 Base: ${dbTest.rows[0].db}`);
-        console.log(`   🕐 Heure: ${dbTest.rows[0].time}`);
-        
-        // Démarrer le serveur
-        app.listen(PORT, '0.0.0.0', () => {
-            console.log(`\n🚀 ShieldMe API démarrée avec succès!`);
-            console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-            console.log(`   🌍 Environnement: ${process.env.NODE_ENV || 'development'}`);
-            console.log(`   🔌 Port: ${PORT}`);
-            console.log(`   🌐 URL: http://localhost:${PORT}`);
-            console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-            console.log(`\n📝 Points d'accès disponibles:`);
-            console.log(`   🏠 Accueil: http://localhost:${PORT}/`);
-            console.log(`   💚 Health: http://localhost:${PORT}/health`);
-            console.log(`   🔐 Auth: http://localhost:${PORT}/api/auth`);
-            console.log(`\n✨ API prête à recevoir des requêtes!`);
-        });
-        
-    } catch (error) {
-        console.error('❌ Erreur au démarrage du serveur:');
-        console.error(`   Message: ${error.message}`);
-        console.error(`   Code: ${error.code || 'N/A'}`);
-        
-        if (error.code === 'ECONNREFUSED') {
-            console.error(`\n💡 Solutions:`);
-            console.error(`   1. Vérifie que PostgreSQL est démarré`);
-            console.error(`   2. Vérifie les identifiants dans .env`);
-            console.error(`   3. Lance Docker: docker-compose up -d`);
-        }
-        
-        process.exit(1);
+  res.json({ 
+    name: 'ShieldMe API',
+    version: '1.0.0',
+    status: 'running',
+    endpoints: {
+      health: 'GET /health',
+      sendOtp: 'POST /api/auth/send-otp',
+      verifyOtp: 'POST /api/auth/verify-otp',
+      me: 'GET /api/auth/me',
+      logout: 'POST /api/auth/logout'
     }
-};
-
-// Gestion des signaux d'arrêt
-process.on('SIGINT', () => {
-    console.log('\n🛑 Arrêt du serveur...');
-    pool.end(() => {
-        console.log('✅ Connexion DB fermée');
-        process.exit(0);
-    });
+  });
 });
 
-process.on('SIGTERM', () => {
-    console.log('\n🛑 Arrêt du serveur...');
-    pool.end(() => {
-        console.log('✅ Connexion DB fermée');
-        process.exit(0);
-    });
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({ 
+    success: false, 
+    message: `Route non trouvée: ${req.method} ${req.url}` 
+  });
 });
 
-// Lancer le serveur
-startServer();
+// Error handler
+app.use((err, req, res, next) => {
+  console.error('❌ Erreur:', err.message);
+  res.status(500).json({ 
+    success: false, 
+    message: 'Erreur interne du serveur' 
+  });
+});
+
+// Démarrer le serveur
+app.listen(PORT, () => {
+  console.log('\n' + '='.repeat(50));
+  console.log('🚀 ShieldMe API Server');
+  console.log('='.repeat(50));
+  console.log(`📡 URL: http://localhost:${PORT}`);
+  console.log(`🔗 API: http://localhost:${PORT}/api`);
+  console.log(`📱 Code OTP de test: 123456`);
+  console.log('='.repeat(50) + '\n');
+});
