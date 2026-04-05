@@ -4,61 +4,12 @@ import '../../../core/themes/app_theme.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/theme_provider.dart';
 import '../../widgets/bottom_nav/shield_bottom_nav.dart';
-
-// Widgets temporaires pour les onglets
-class HomeTab extends StatelessWidget {
-  const HomeTab({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(child: Text('Page Accueil'));
-  }
-}
-
-class SmsTab extends StatelessWidget {
-  const SmsTab({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(child: Text('Page SMS'));
-  }
-}
-
-class ScanTab extends StatelessWidget {
-  const ScanTab({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(child: Text('Page Scanner'));
-  }
-}
-
-class WalletTab extends StatelessWidget {
-  const WalletTab({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(child: Text('Page Portefeuille'));
-  }
-}
-
-class PremiumTab extends StatelessWidget {
-  const PremiumTab({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(child: Text('Page Premium'));
-  }
-}
-
-class ProfileTab extends StatelessWidget {
-  const ProfileTab({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(child: Text('Page Profil'));
-  }
-}
+import 'tabs/home_tab.dart';
+import 'tabs/sms_tab.dart';
+import 'tabs/scan_tab.dart';
+import 'tabs/wallet_tab.dart';
+import 'tabs/premium_tab.dart';
+import 'tabs/profile_tab.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -79,20 +30,25 @@ class _HomeScreenState extends State<HomeScreen> {
     ProfileTab(),
   ];
 
+  void setCurrentIndex(int index) {
+    setState(() {
+      _currentIndex = index;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Récupérer les providers
     final authProvider = Provider.of<AuthProvider>(context);
     final themeProvider = Provider.of<ThemeProvider>(context);
     final isDark = themeProvider.themeMode == ThemeMode.dark;
     final user = authProvider.currentUser;
-    final name = user?.fullName.split(' ')[0] ?? 'Utilisateur';
+    final userName = user?.fullName.split(' ')[0] ?? 'Utilisateur';
 
     return Scaffold(
       body: Column(
         children: [
-          // Custom App Bar - Passer les paramètres nécessaires
-          _buildAppBar(isDark: isDark, userName: name, themeProvider: themeProvider),
+          // Custom App Bar
+          _buildAppBar(isDark, userName, themeProvider),
           // Main Content
           Expanded(
             child: IndexedStack(
@@ -114,11 +70,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildAppBar({
-    required bool isDark,
-    required String userName,
-    required ThemeProvider themeProvider,
-  }) {
+  Widget _buildAppBar(bool isDark, String userName, ThemeProvider themeProvider) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       decoration: BoxDecoration(
@@ -146,7 +98,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               Text(
                 'Bonjour, $userName 👋',
-                style: TextStyle(
+                style: const TextStyle(
                   fontSize: 11,
                   color: AppTheme.grayLight,
                 ),

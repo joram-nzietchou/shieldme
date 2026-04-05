@@ -1,36 +1,32 @@
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../../core/constants/app_constants.dart';
 import '../storage/secure_storage.dart';
 
-class ApiClient {
-  static final ApiClient _instance = ApiClient._internal();
-  factory ApiClient() => _instance;
-  ApiClient._internal();
-
+class ApiClient extends ChangeNotifier {
   String? _authToken;
-  final SecureStorage _secureStorage = SecureStorage();
   bool _isLoading = false;
+  final SecureStorage _secureStorage = SecureStorage();
 
   String? get authToken => _authToken;
   bool get isLoading => _isLoading;
 
   Future<void> init() async {
     _authToken = await _secureStorage.getToken();
-    if (kDebugMode) {
-      print('ApiClient initialisé, token présent: ${_authToken != null}');
-    }
+    notifyListeners();
   }
 
   void setAuthToken(String token) {
     _authToken = token;
     _secureStorage.saveToken(token);
+    notifyListeners();
   }
 
   Future<void> clearAuthToken() async {
     _authToken = null;
     await _secureStorage.deleteToken();
+    notifyListeners();
   }
 
   Map<String, String> _getHeaders() {
@@ -44,69 +40,71 @@ class ApiClient {
     return headers;
   }
 
+  // POST request
   Future<Map<String, dynamic>> post(String endpoint, Map<String, dynamic> data) async {
     _setLoading(true);
     try {
       final url = Uri.parse('${AppConstants.baseUrl}$endpoint');
-      
-      if (kDebugMode) {
-        print('📤 POST: $url');
-        print('📦 Body: $data');
-      }
-      
       final response = await http.post(
         url,
         headers: _getHeaders(),
         body: jsonEncode(data),
       ).timeout(const Duration(seconds: AppConstants.connectTimeout));
-      
-      if (kDebugMode) {
-        print('📥 Status: ${response.statusCode}');
-        print('📥 Body: ${response.body}');
-      }
-      
       return _handleResponse(response);
     } catch (e) {
-      if (kDebugMode) {
-        print('❌ Error: $e');
-      }
-      return {
-        'success': false,
-        'message': _getErrorMessage(e),
-      };
+      return _handleError(e);
     } finally {
       _setLoading(false);
     }
   }
 
+  // GET request
   Future<Map<String, dynamic>> get(String endpoint) async {
     _setLoading(true);
     try {
       final url = Uri.parse('${AppConstants.baseUrl}$endpoint');
-      
-      if (kDebugMode) {
-        print('📤 GET: $url');
-      }
-      
       final response = await http.get(
         url,
         headers: _getHeaders(),
       ).timeout(const Duration(seconds: AppConstants.connectTimeout));
-      
-      if (kDebugMode) {
-        print('📥 Status: ${response.statusCode}');
-        print('📥 Body: ${response.body}');
-      }
-      
       return _handleResponse(response);
     } catch (e) {
-      if (kDebugMode) {
-        print('❌ Error: $e');
-      }
-      return {
-        'success': false,
-        'message': _getErrorMessage(e),
-      };
+      return _handleError(e);
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  // PUT request - AJOUTER CETTE MÉTHODE
+  Future<Map<String, dynamic>> put(String endpoint, Map<String, dynamic> data) async {
+    _setLoading(true);
+    try {
+      final url = Uri.parse('${AppConstants.baseUrl}$endpoint');
+      final response = await http.put(
+        url,
+        headers: _getHeaders(),
+        body: jsonEncode(data),
+      ).timeout(const Duration(seconds: AppConstants.connectTimeout));
+      return _handleResponse(response);
+    } catch (e) {
+      return _handleError(e);
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  // DELETE request - AJOUTER CETTE MÉTHODE (optionnelle)
+  Future<Map<String, dynamic>> delete(String endpoint) async {
+    _setLoading(true);
+    try {
+      final url = Uri.parse('${AppConstants.baseUrl}$endpoint');
+      final response = await http.delete(
+        url,
+        headers: _getHeaders(),
+      ).timeout(const Duration(seconds: AppConstants.connectTimeout));
+      return _handleResponse(response);
+    } catch (e) {
+      return _handleError(e);
     } finally {
       _setLoading(false);
     }
@@ -123,51 +121,33 @@ class ApiClient {
         };
       }
       
-      // Gestion des erreurs spécifiques
       switch (response.statusCode) {
         case 400:
           return {
             'success': false,
             'message': data['message'] ?? 'Requête invalide',
-            'code': 'BAD_REQUEST'
           };
         case 401:
           clearAuthToken();
           return {
             'success': false,
-            'message': data['message'] ?? 'Session expirée. Veuillez vous reconnecter.',
-            'code': 'UNAUTHORIZED'
-          };
-        case 403:
-          return {
-            'success': false,
-            'message': data['message'] ?? 'Accès non autorisé.',
-            'code': 'FORBIDDEN'
+            'message': data['message'] ?? 'Session expirée',
           };
         case 404:
           return {
             'success': false,
-            'message': data['message'] ?? 'Service non trouvé.',
-            'code': 'NOT_FOUND'
-          };
-        case 429:
-          return {
-            'success': false,
-            'message': data['message'] ?? 'Trop de requêtes. Veuillez patienter.',
-            'code': 'RATE_LIMIT'
+            'message': data['message'] ?? 'Service non trouvé',
           };
         default:
           return {
             'success': false,
-            'message': data['message'] ?? 'Erreur serveur (${response.statusCode})',
-            'code': 'SERVER_ERROR'
+            'message': data['message'] ?? 'Erreur serveur',
           };
       }
     } catch (e) {
       return {
         'success': false,
         'message': 'Erreur de lecture de la réponse',
-        'code': 'PARSE_ERROR'
       };
     }
   }
@@ -183,7 +163,15 @@ class ApiClient {
     return error.toString().replaceAll('Exception: ', '');
   }
 
+  Map<String, dynamic> _handleError(dynamic error) {
+    return {
+      'success': false,
+      'message': _getErrorMessage(error),
+    };
+  }
+
   void _setLoading(bool loading) {
     _isLoading = loading;
+    notifyListeners();
   }
 }
