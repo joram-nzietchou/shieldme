@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:pinput/pinput.dart';
@@ -30,6 +31,32 @@ class _OTPScreenState extends State<OTPScreen> {
   final TextEditingController _otpController = TextEditingController();
   String _errorMessage = '';
   bool _isLoading = false;
+  int _resendCountdown = 30;
+  bool _canResend = false;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _startResendTimer();
+  }
+
+  void _startResendTimer() {
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (mounted) {
+        if (_resendCountdown > 0) {
+          setState(() {
+            _resendCountdown--;
+          });
+        } else {
+          setState(() {
+            _canResend = true;
+          });
+          _timer?.cancel();
+        }
+      }
+    });
+  }
 
   Future<void> _verifyOtp() async {
     final otp = _otpController.text.trim();
@@ -47,6 +74,7 @@ class _OTPScreenState extends State<OTPScreen> {
       otp: otp,
       fullName: widget.fullName,
       referralCode: widget.referralCode,
+      isRegister: widget.isRegister,
       context: context,
     );
 
@@ -58,17 +86,30 @@ class _OTPScreenState extends State<OTPScreen> {
   }
 
   Future<void> _resendOtp() async {
+    if (!_canResend) return;
+
     setState(() {
       _isLoading = true;
       _errorMessage = '';
     });
 
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final success = await authProvider.sendOtp(widget.phone);
+    final success = await authProvider.sendOtp(
+      widget.phone,
+      isRegister: widget.isRegister,
+    );
 
     setState(() => _isLoading = false);
 
     if (success && mounted) {
+      setState(() {
+        _canResend = false;
+        _resendCountdown = 30;
+        _errorMessage = '';
+      });
+      _timer?.cancel();
+      _startResendTimer();
+      
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Nouveau code envoyé!'),
@@ -86,6 +127,7 @@ class _OTPScreenState extends State<OTPScreen> {
   @override
   void dispose() {
     _otpController.dispose();
+    _timer?.cancel();
     super.dispose();
   }
 
@@ -103,7 +145,7 @@ class _OTPScreenState extends State<OTPScreen> {
         fontFamily: 'Outfit',
       ),
       decoration: BoxDecoration(
-        color: isDark ? AppTheme.cardDark : AppTheme.surfaceLight,
+        color: isDark ? const Color(0xFF1A2236) : Colors.white,
         border: Border.all(color: AppTheme.grayLight.withOpacity(0.3)),
         borderRadius: BorderRadius.circular(12),
       ),
@@ -162,28 +204,29 @@ class _OTPScreenState extends State<OTPScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Text(
-                        'Pas reçu? ',
+                      Text(
+                        _canResend ? 'Pas reçu? ' : 'Renvoyer dans $_resendCountdown s',
                         style: TextStyle(
                           color: AppTheme.grayLight,
                           fontSize: 13,
                         ),
                       ),
-                      GestureDetector(
-                        onTap: _resendOtp,
-                        child: const Text(
-                          'Renvoyer le code',
-                          style: TextStyle(
-                            color: AppTheme.primaryBlue,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 13,
+                      if (_canResend)
+                        GestureDetector(
+                          onTap: _resendOtp,
+                          child: Text(
+                            'Renvoyer le code',
+                            style: TextStyle(
+                              color: AppTheme.primaryBlue,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                            ),
                           ),
                         ),
-                      ),
                     ],
                   ),
                   const SizedBox(height: 16),
-                  const Text(
+                  Text(
                     'Vérifiez vos SMS. Le code expire dans ${AppConstants.otpExpiryMinutes} minutes.',
                     style: TextStyle(
                       fontSize: 12,

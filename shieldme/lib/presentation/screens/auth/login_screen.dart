@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/utils/validators.dart';
+import '../../../core/themes/app_theme.dart';
 import '../../providers/auth_provider.dart';
 import '../../widgets/auth/auth_header.dart';
 import '../../widgets/auth/shield_button.dart';
-import '../../../core/themes/app_theme.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -16,18 +16,24 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _phoneController = TextEditingController();
-
-  @override
-  void dispose() {
-    _phoneController.dispose();
-    super.dispose();
-  }
+  bool _isLoading = false;
+  String? _errorMessage;
 
   Future<void> _sendOtp() async {
     if (!_formKey.currentState!.validate()) return;
+    
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
 
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final success = await authProvider.sendOtp(_phoneController.text.trim());
+    final success = await authProvider.sendOtp(
+      _phoneController.text.trim(),
+      isRegister: false, // Important : connexion uniquement
+    );
+
+    setState(() => _isLoading = false);
 
     if (success && mounted) {
       Navigator.pushNamed(
@@ -38,13 +44,21 @@ class _LoginScreenState extends State<LoginScreen> {
           'isRegister': false,
         },
       );
+    } else if (mounted) {
+      setState(() {
+        _errorMessage = authProvider.error ?? 'Erreur lors de l\'envoi du code';
+      });
     }
   }
 
   @override
+  void dispose() {
+    _phoneController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<AuthProvider>(context);
-    
     return Scaffold(
       body: Form(
         key: _formKey,
@@ -70,23 +84,35 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       validator: Validators.validatePhone,
                     ),
-                    const SizedBox(height: 32),
-                    if (authProvider.error != null)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 16),
-                        child: Text(
-                          authProvider.error!,
-                          style: const TextStyle(
-                            color: AppTheme.dangerRed,
-                            fontSize: 13,
-                          ),
-                          textAlign: TextAlign.center,
+                    const SizedBox(height: 16),
+                    if (_errorMessage != null)
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: AppTheme.dangerRed.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.error_outline, color: AppTheme.dangerRed, size: 20),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                _errorMessage!,
+                                style: const TextStyle(
+                                  color: AppTheme.dangerRed,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
+                    const SizedBox(height: 16),
                     ShieldButton(
                       text: 'Recevoir le code OTP',
                       onPressed: _sendOtp,
-                      isLoading: authProvider.isLoading,
+                      isLoading: _isLoading,
                       icon: Icons.send,
                     ),
                     const SizedBox(height: 16),

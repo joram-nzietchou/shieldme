@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../core/utils/validators.dart';
+import '../../../core/themes/app_theme.dart';
 import '../../providers/auth_provider.dart';
 import '../../widgets/auth/auth_header.dart';
 import '../../widgets/auth/shield_button.dart';
-import '../../../core/themes/app_theme.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -18,20 +18,24 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _nameController = TextEditingController();
   final _phoneController = TextEditingController();
   final _referralController = TextEditingController();
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    _phoneController.dispose();
-    _referralController.dispose();
-    super.dispose();
-  }
+  bool _isLoading = false;
+  String? _errorMessage;
 
   Future<void> _sendOtp() async {
     if (!_formKey.currentState!.validate()) return;
+    
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
 
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final success = await authProvider.sendOtp(_phoneController.text.trim());
+    final success = await authProvider.sendOtp(
+      _phoneController.text.trim(),
+      isRegister: true, // Important : inscription
+    );
+
+    setState(() => _isLoading = false);
 
     if (success && mounted) {
       Navigator.pushNamed(
@@ -44,13 +48,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
           'isRegister': true,
         },
       );
+    } else if (mounted) {
+      setState(() {
+        _errorMessage = authProvider.error ?? 'Erreur lors de l\'envoi du code';
+      });
     }
   }
 
   @override
+  void dispose() {
+    _nameController.dispose();
+    _phoneController.dispose();
+    _referralController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<AuthProvider>(context);
-    
     return Scaffold(
       body: Form(
         key: _formKey,
@@ -97,30 +111,42 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       textCapitalization: TextCapitalization.characters,
                       validator: Validators.validateReferralCode,
                     ),
-                    const SizedBox(height: 32),
-                    if (authProvider.error != null)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 16),
-                        child: Text(
-                          authProvider.error!,
-                          style: const TextStyle(
-                            color: AppTheme.dangerRed,
-                            fontSize: 13,
-                          ),
-                          textAlign: TextAlign.center,
+                    const SizedBox(height: 16),
+                    if (_errorMessage != null)
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: AppTheme.dangerRed.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.error_outline, color: AppTheme.dangerRed, size: 20),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                _errorMessage!,
+                                style: const TextStyle(
+                                  color: AppTheme.dangerRed,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
+                    const SizedBox(height: 16),
                     ShieldButton(
                       text: 'Recevoir le code OTP',
                       onPressed: _sendOtp,
-                      isLoading: authProvider.isLoading,
+                      isLoading: _isLoading,
                       icon: Icons.send,
                     ),
                     const SizedBox(height: 16),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Text(
+                        Text(
                           'Déjà un compte? ',
                           style: TextStyle(
                             color: AppTheme.grayLight,
@@ -131,7 +157,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           onTap: () {
                             Navigator.pushNamed(context, '/login');
                           },
-                          child: const Text(
+                          child: Text(
                             'Se connecter',
                             style: TextStyle(
                               color: AppTheme.primaryBlue,

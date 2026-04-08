@@ -5,18 +5,18 @@ import '../../services/api/api_client.dart';
 import '../../services/storage/secure_storage.dart';
 
 class AuthProvider extends ChangeNotifier {
-  final AuthRepository _authRepository;
+  late final AuthRepository _authRepository;
   bool _isLoading = false;
   String? _error;
   UserModel? _currentUser;
 
-  AuthProvider({
-    ApiClient? apiClient,
-    SecureStorage? secureStorage,
-  }) : _authRepository = AuthRepository(
-          apiClient: apiClient ?? ApiClient(),
-          secureStorage: secureStorage ?? SecureStorage(),
-        ) {
+  AuthProvider() {
+    final apiClient = ApiClient();
+    final secureStorage = SecureStorage();
+    _authRepository = AuthRepository(
+      apiClient: apiClient,
+      secureStorage: secureStorage,
+    );
     _loadCurrentUser();
   }
 
@@ -29,12 +29,12 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<bool> sendOtp(String phone) async {
+  Future<bool> sendOtp(String phone, {required bool isRegister}) async {
     _setLoading(true);
     _clearError();
     
     try {
-      final response = await _authRepository.sendOtp(phone);
+      final response = await _authRepository.sendOtp(phone, isRegister: isRegister);
       if (response['success'] == true) {
         return true;
       } else {
@@ -54,6 +54,7 @@ class AuthProvider extends ChangeNotifier {
     required String otp,
     String? fullName,
     String? referralCode,
+    required bool isRegister,
     required BuildContext context,
   }) async {
     _setLoading(true);
@@ -65,6 +66,7 @@ class AuthProvider extends ChangeNotifier {
         otp: otp,
         fullName: fullName,
         referralCode: referralCode,
+        isRegister: isRegister,
       );
       
       if (response['success'] == true) {
@@ -99,14 +101,6 @@ class AuthProvider extends ChangeNotifier {
 
   Future<UserModel?> getCurrentUser() async {
     return _currentUser;
-  }
-
-  Future<void> refreshUser() async {
-    final user = await _authRepository.getCurrentUser();
-    if (user != null) {
-      _currentUser = user;
-      notifyListeners();
-    }
   }
 
   void _setLoading(bool loading) {

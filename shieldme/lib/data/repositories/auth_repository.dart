@@ -14,25 +14,13 @@ class AuthRepository {
   }) : _apiClient = apiClient ?? ApiClient(),
        _secureStorage = secureStorage ?? SecureStorage();
 
-  Future<Map<String, dynamic>> sendOtp(String phone) async {
+  Future<Map<String, dynamic>> sendOtp(String phone, {required bool isRegister}) async {
     try {
       final response = await _apiClient.post(ApiEndpoints.sendOtp, {
         'phone': phone,
+        'isRegister': isRegister,
       });
-      
-      // response est un Map<String, dynamic>, pas un objet avec .success
-      if (response['success'] == true) {
-        return {
-          'success': true,
-          'message': response['message'] ?? 'Code envoyé',
-          'expiresIn': response['expiresIn'] ?? 5,
-        };
-      } else {
-        return {
-          'success': false,
-          'message': response['message'] ?? 'Erreur lors de l\'envoi',
-        };
-      }
+      return response;
     } catch (e) {
       return {
         'success': false,
@@ -46,11 +34,13 @@ class AuthRepository {
     required String otp,
     String? fullName,
     String? referralCode,
+    required bool isRegister,
   }) async {
     try {
       final Map<String, dynamic> data = {
         'phone': phone,
         'otp': otp,
+        'isRegister': isRegister,
       };
       
       if (fullName != null && fullName.isNotEmpty) {
@@ -63,7 +53,6 @@ class AuthRepository {
 
       final response = await _apiClient.post(ApiEndpoints.verifyOtp, data);
       
-      // Vérifier avec response['success'] (Map)
       if (response['success'] == true) {
         final token = response['token'];
         final refreshToken = response['refreshToken'];
@@ -83,12 +72,9 @@ class AuthRepository {
           'user': UserModel.fromJson(userData),
           'isNewUser': response['isNewUser'] ?? false,
         };
-      } else {
-        return {
-          'success': false,
-          'message': response['message'] ?? 'Code invalide',
-        };
       }
+      
+      return response;
     } catch (e) {
       return {
         'success': false,
@@ -101,39 +87,14 @@ class AuthRepository {
     try {
       final response = await _apiClient.get(ApiEndpoints.me);
       
-      // Vérifier avec response['success'] (Map)
       if (response['success'] == true) {
-        final userData = response['user'] as Map<String, dynamic>;
+        final userData = response['user'];
         await _secureStorage.saveUserData(jsonEncode(userData));
         return UserModel.fromJson(userData);
       }
       return null;
     } catch (e) {
       return null;
-    }
-  }
-
-  Future<Map<String, dynamic>> refreshToken() async {
-    try {
-      final refreshToken = await _secureStorage.getRefreshToken();
-      if (refreshToken == null) {
-        return {'success': false, 'message': 'No refresh token'};
-      }
-      
-      final response = await _apiClient.post(ApiEndpoints.refreshToken, {
-        'refreshToken': refreshToken,
-      });
-      
-      if (response['success'] == true) {
-        final newToken = response['token'];
-        await _secureStorage.saveToken(newToken);
-        _apiClient.setAuthToken(newToken);
-        return {'success': true, 'token': newToken};
-      }
-      
-      return {'success': false, 'message': response['message']};
-    } catch (e) {
-      return {'success': false, 'message': e.toString()};
     }
   }
 

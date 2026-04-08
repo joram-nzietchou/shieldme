@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 
-// Stockage temporaire en mémoire
+// Stockage temporaire en mémoire (à remplacer par PostgreSQL en production)
 const users = new Map();
 const otps = new Map();
 
@@ -10,20 +10,48 @@ const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
+// Générer un code de parrainage unique
+const generateReferralCode = (fullName) => {
+  const base = fullName.substring(0, 3).toUpperCase();
+  const random = Math.floor(1000 + Math.random() * 9000);
+  return `${base}-${random}`;
+};
+
 // ==================== ROUTES ====================
 
-// POST /api/auth/send-otp - Envoyer un code OTP
+// POST /api/auth/send-otp - Envoyer un code OTP (Connexion ou Inscription)
 router.post('/send-otp', (req, res) => {
-  const { phone } = req.body;
+  const { phone, isRegister } = req.body;
   
   console.log('\n📨 Requête reçue: send-otp');
   console.log('📞 Téléphone:', phone);
+  console.log('📝 Type:', isRegister ? 'Inscription' : 'Connexion');
   
   if (!phone) {
-    console.log('❌ Erreur: Téléphone manquant');
     return res.status(400).json({
       success: false,
       message: 'Le numéro de téléphone est requis'
+    });
+  }
+  
+  // Vérifier si l'utilisateur existe
+  const existingUser = users.get(phone);
+  
+  // Cas 1: Connexion - L'utilisateur DOIT exister
+  if (!isRegister && !existingUser) {
+    console.log('❌ Connexion refusée: Utilisateur non trouvé');
+    return res.status(404).json({
+      success: false,
+      message: 'Aucun compte trouvé avec ce numéro. Veuillez vous inscrire.'
+    });
+  }
+  
+  // Cas 2: Inscription - L'utilisateur NE DOIT PAS exister
+  if (isRegister && existingUser) {
+    console.log('❌ Inscription refusée: Compte déjà existant');
+    return res.status(409).json({
+      success: false,
+      message: 'Un compte existe déjà avec ce numéro. Veuillez vous connecter.'
     });
   }
   
@@ -31,47 +59,65 @@ router.post('/send-otp', (req, res) => {
   const otpCode = generateOTP();
   const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
   
+  // Supprimer les anciens OTPs non utilisés
+  for (const [key, value] of otps.entries()) {
+    if (value.phone === phone && !value.isUsed) {
+      otps.delete(key);
+    }
+  }
+  
   // Stocker l'OTP
-  otps.set(phone, {
+  const otpId = Date.now().toString();
+  otps.set(otpId, {
+    phone: phone,
     code: otpCode,
     expiresAt: expiresAt,
     isUsed: false,
+    isRegister: isRegister,
     createdAt: new Date().toISOString()
   });
   
-  // Afficher le code dans la console (pour le développement)
   console.log(`✅ OTP généré: ${otpCode}`);
   console.log(`⏰ Expire dans 5 minutes`);
   console.log(`📱 Envoyé à: ${phone}\n`);
   
-  // En production, vous devriez envoyer un vrai SMS ici
-  // Pour le test, on retourne le code dans la réponse (uniquement en développement)
   res.json({
     success: true,
-    message: 'Code OTP envoyé avec succès',
+    message: isRegister ? 'Code OTP envoyé pour inscription' : 'Code OTP envoyé pour connexion',
     expiresIn: 5,
-    // Pour le développement seulement - à supprimer en production
+    otpId: otpId,
+    // Pour le développement seulement
     debugCode: process.env.NODE_ENV === 'development' ? otpCode : undefined
   });
 });
 
 // POST /api/auth/verify-otp - Vérifier le code OTP
 router.post('/verify-otp', (req, res) => {
-  const { phone, otp, fullName, referralCode } = req.body;
+  const { phone, otp, fullName, referralCode, otpId } = req.body;
   
   console.log('\n🔐 Requête reçue: verify-otp');
   console.log('📞 Téléphone:', phone);
   console.log('🔢 Code OTP saisi:', otp);
+  console.log('📝 Nom:', fullName || 'Non fourni');
   
   if (!phone || !otp) {
-    console.log('❌ Erreur: Téléphone ou OTP manquant');
     return res.status(400).json({
       success: false,
       message: 'Téléphone et code OTP requis'
     });
   }
   
-  const storedOtp = otps.get(phone);
+  // Récupérer l'OTP
+  let storedOtp = null;
+  let otpKey = null;
+  
+  for (const [key, value] of otps.entries()) {
+    if (value.phone === phone && !value.isUsed) {
+      storedOtp = value;
+      otpKey = key;
+      break;
+    }
+  }
   
   // Vérifier si un OTP a été envoyé
   if (!storedOtp) {
@@ -82,20 +128,10 @@ router.post('/verify-otp', (req, res) => {
     });
   }
   
-  // Vérifier si le code a déjà été utilisé
-  if (storedOtp.isUsed) {
-    console.log('❌ Erreur: Code déjà utilisé');
-    return res.status(400).json({
-      success: false,
-      message: 'Ce code OTP a déjà été utilisé. Veuillez demander un nouveau code.'
-    });
-  }
-  
   // Vérifier si le code a expiré
   if (storedOtp.expiresAt < Date.now()) {
     console.log('❌ Erreur: Code expiré');
-    // Nettoyer l'OTP expiré
-    otps.delete(phone);
+    otps.delete(otpKey);
     return res.status(400).json({
       success: false,
       message: 'Code OTP expiré. Veuillez demander un nouveau code.'
@@ -113,41 +149,91 @@ router.post('/verify-otp', (req, res) => {
   
   // Marquer l'OTP comme utilisé
   storedOtp.isUsed = true;
-  otps.set(phone, storedOtp);
+  otps.set(otpKey, storedOtp);
   
   // Vérifier si l'utilisateur existe déjà
   let user = users.get(phone);
   let isNewUser = false;
   
-  if (!user) {
-    // Créer un nouvel utilisateur
+  // CAS 1: INSCRIPTION - Créer un nouvel utilisateur
+  if (storedOtp.isRegister && !user) {
+    if (!fullName) {
+      return res.status(400).json({
+        success: false,
+        message: 'Le nom complet est requis pour l\'inscription'
+      });
+    }
+    
     const userId = users.size + 1;
-    const generatedReferralCode = `SHIELD-${Math.floor(1000 + Math.random() * 9000)}`;
+    const generatedReferralCode = generateReferralCode(fullName);
+    
+    // Vérifier le code de parrainage si fourni
+    let referredBy = null;
+    if (referralCode) {
+      for (const [_, existingUser] of users.entries()) {
+        if (existingUser.referralCode === referralCode.toUpperCase()) {
+          referredBy = existingUser.id;
+          break;
+        }
+      }
+    }
     
     user = {
       id: userId,
-      fullName: fullName || 'Utilisateur',
+      fullName: fullName,
       phone: phone,
       referralCode: generatedReferralCode,
+      referredBy: referredBy,
       isPremium: false,
       walletBalance: 100,
       totalReferred: 0,
       subscribedReferred: 0,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      lastLogin: new Date().toISOString()
     };
     
     users.set(phone, user);
     isNewUser = true;
     
-    console.log(`✅ Nouvel utilisateur créé: ${fullName || 'Utilisateur'}`);
+    console.log(`✅ Nouvel utilisateur créé: ${fullName}`);
     console.log(`📱 Téléphone: ${phone}`);
     console.log(`🔑 Code parrainage: ${generatedReferralCode}`);
+    console.log(`💰 Bonus de bienvenue: 100 FCFA`);
     
-    // Bonus de bienvenue
-    console.log(`💰 Bonus de bienvenue: 100 FCFA ajouté au portefeuille`);
+    // Bonus de parrainage pour le parrain
+    if (referredBy) {
+      console.log(`👥 Parrainé par: ${referredBy}`);
+      // Ajouter bonus au parrain
+      for (const [_, existingUser] of users.entries()) {
+        if (existingUser.id === referredBy) {
+          existingUser.walletBalance += 100;
+          existingUser.totalReferred += 1;
+          console.log(`💰 Bonus de parrainage: +100 FCFA pour ${existingUser.fullName}`);
+          break;
+        }
+      }
+    }
     
-  } else {
-    console.log(`🔐 Utilisateur existant connecté: ${user.fullName}`);
+  } 
+  // CAS 2: CONNEXION - Utilisateur existant
+  else if (!storedOtp.isRegister && user) {
+    user.lastLogin = new Date().toISOString();
+    users.set(phone, user);
+    console.log(`🔐 Utilisateur connecté: ${user.fullName}`);
+  }
+  // CAS 3: ERREUR - Inscription mais utilisateur existe déjà
+  else if (storedOtp.isRegister && user) {
+    return res.status(409).json({
+      success: false,
+      message: 'Un compte existe déjà avec ce numéro. Veuillez vous connecter.'
+    });
+  }
+  // CAS 4: ERREUR - Connexion mais utilisateur n'existe pas
+  else if (!storedOtp.isRegister && !user) {
+    return res.status(404).json({
+      success: false,
+      message: 'Aucun compte trouvé. Veuillez vous inscrire.'
+    });
   }
   
   // Générer un token JWT (simulé pour l'instant)
@@ -155,14 +241,24 @@ router.post('/verify-otp', (req, res) => {
   const refreshToken = `refresh_${Date.now()}_${user.id}`;
   
   console.log(`✅ Token généré: ${token.substring(0, 30)}...`);
-  console.log(`✅ Connexion ${isNewUser ? 'inscription' : 'connexion'} réussie!\n`);
+  console.log(`✅ ${isNewUser ? 'Inscription' : 'Connexion'} réussie !\n`);
   
   res.json({
     success: true,
-    message: isNewUser ? 'Inscription réussie!' : 'Connexion réussie!',
+    message: isNewUser ? 'Inscription réussie ! Bienvenue sur ShieldMe !' : 'Connexion réussie !',
     token: token,
     refreshToken: refreshToken,
-    user: user,
+    user: {
+      id: user.id,
+      fullName: user.fullName,
+      phone: user.phone,
+      referralCode: user.referralCode,
+      isPremium: user.isPremium,
+      walletBalance: user.walletBalance,
+      totalReferred: user.totalReferred || 0,
+      subscribedReferred: user.subscribedReferred || 0,
+      createdAt: user.createdAt
+    },
     isNewUser: isNewUser
   });
 });
@@ -173,48 +269,82 @@ router.get('/me', (req, res) => {
   const token = authHeader?.replace('Bearer ', '');
   
   console.log('\n👤 Requête reçue: get-me');
-  console.log('🔑 Token:', token?.substring(0, 30) + '...');
   
   if (!token) {
-    console.log('❌ Erreur: Token manquant');
     return res.status(401).json({
       success: false,
       message: 'Token d\'authentification manquant'
     });
   }
   
-  // Pour le développement, on renvoie un utilisateur de test
-  // En production, il faudrait décoder le JWT et trouver l'utilisateur
-  const testUser = {
-    id: 1,
-    fullName: 'Jean Kamga',
-    phone: '+237612345678',
-    referralCode: 'SHIELD-001',
-    isPremium: false,
-    walletBalance: 150,
-    totalReferred: 2,
-    subscribedReferred: 1,
-    createdAt: new Date().toISOString()
-  };
+  // Extraire l'ID utilisateur du token (simplifié)
+  const tokenParts = token.split('_');
+  const userId = parseInt(tokenParts[2]);
   
-  console.log(`✅ Utilisateur trouvé: ${testUser.fullName}\n`);
+  // Trouver l'utilisateur
+  let foundUser = null;
+  for (const [_, user] of users.entries()) {
+    if (user.id === userId) {
+      foundUser = user;
+      break;
+    }
+  }
+  
+  if (!foundUser) {
+    return res.status(401).json({
+      success: false,
+      message: 'Utilisateur non trouvé'
+    });
+  }
+  
+  console.log(`✅ Utilisateur trouvé: ${foundUser.fullName}\n`);
   
   res.json({
     success: true,
-    user: testUser
+    user: {
+      id: foundUser.id,
+      fullName: foundUser.fullName,
+      phone: foundUser.phone,
+      referralCode: foundUser.referralCode,
+      isPremium: foundUser.isPremium,
+      walletBalance: foundUser.walletBalance,
+      totalReferred: foundUser.totalReferred || 0,
+      subscribedReferred: foundUser.subscribedReferred || 0,
+      createdAt: foundUser.createdAt
+    }
   });
 });
 
 // POST /api/auth/logout - Déconnexion
 router.post('/logout', (req, res) => {
   console.log('\n🚪 Requête reçue: logout');
-  
-  // En production, on pourrait blacklister le token
   console.log('✅ Déconnexion réussie\n');
   
   res.json({
     success: true,
     message: 'Déconnecté avec succès'
+  });
+});
+
+// GET /api/auth/users - Lister tous les utilisateurs (admin seulement)
+router.get('/users', (req, res) => {
+  const userList = [];
+  for (const [_, user] of users.entries()) {
+    userList.push({
+      id: user.id,
+      fullName: user.fullName,
+      phone: user.phone,
+      referralCode: user.referralCode,
+      isPremium: user.isPremium,
+      createdAt: user.createdAt,
+      lastLogin: user.lastLogin
+    });
+  }
+  
+  res.json({
+    success: true,
+    count: userList.length,
+    users: userList
   });
 });
 
